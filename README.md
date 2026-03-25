@@ -1,0 +1,1 @@
+# Hausrat-Scanner MVP

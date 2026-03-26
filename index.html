@@ -421,6 +421,73 @@
         let detecting = false;
         let currentDetections = [];
 
+        // ----- Smoothing State -----
+        const LERP_SPEED = 0.25;        // How fast boxes move to new position (0-1)
+        const FADE_OUT_MS = 600;         // How long a vanished object stays visible
+        const DETECT_INTERVAL = 250;     // ms between detections (not every frame)
+        let trackedObjects = {};         // key: class name -> smoothed state
+        let lastDetectTime = 0;
+
+        function lerp(a, b, t) { return a + (b - a) * t; }
+
+        function matchAndSmooth(newDetections) {
+            const now = Date.now();
+            const matched = new Set();
+
+            // Update existing tracked objects or add new ones
+            for (const det of newDetections) {
+                const key = det.hausrat.name;
+                const [x, y, w, h] = det.bbox;
+
+                if (trackedObjects[key]) {
+                    // Smoothly interpolate to new position
+                    const t = trackedObjects[key];
+                    t.targetBbox = [x, y, w, h];
+                    t.score = det.score;
+                    t.lastSeen = now;
+                    t.hausrat = det.hausrat;
+                    t.visible = true;
+                } else {
+                    // New object – start at current position
+                    trackedObjects[key] = {
+                        smoothBbox: [x, y, w, h],
+                        targetBbox: [x, y, w, h],
+                        score: det.score,
+                        lastSeen: now,
+                        hausrat: det.hausrat,
+                        visible: true,
+                    };
+                }
+                matched.add(key);
+            }
+
+            // Mark unmatched objects for fade-out
+            for (const key in trackedObjects) {
+                if (!matched.has(key)) {
+                    const age = now - trackedObjects[key].lastSeen;
+                    if (age > FADE_OUT_MS) {
+                        delete trackedObjects[key];
+                    }
+                }
+            }
+
+            // Interpolate all tracked boxes toward their targets
+            for (const key in trackedObjects) {
+                const t = trackedObjects[key];
+                for (let i = 0; i < 4; i++) {
+                    t.smoothBbox[i] = lerp(t.smoothBbox[i], t.targetBbox[i], LERP_SPEED);
+                }
+            }
+
+            // Build currentDetections from tracked state
+            currentDetections = Object.values(trackedObjects).map(t => ({
+                bbox: t.smoothBbox,
+                score: t.score,
+                hausrat: t.hausrat,
+                opacity: Math.max(0, 1 - (now - t.lastSeen) / FADE_OUT_MS),
+            }));
+        }
+
         // ----- Start -----
         startBtn.addEventListener('click', async () => {
             startBtn.disabled = true;
@@ -450,32 +517,60 @@
             startScreen.style.display = 'none';
             cameraView.style.display = 'block';
             resizeCanvas();
-            detectLoop();
+            renderLoop();
         });
 
-        // ----- Detection Loop -----
-        async function detectLoop() {
-            if (!model) return;
-            if (detecting) return;
+        // ----- Detection (throttled) -----
+        async function runDetection() {
+            if (!model || detecting) return;
             detecting = true;
-
             try {
                 const predictions = await model.detect(video, undefined, 0.4);
-                currentDetections = predictions
+                const hausratHits = predictions
                     .filter(p => HAUSRAT_MAP[p.class])
-                    .map(p => ({
-                        ...p,
-                        hausrat: HAUSRAT_MAP[p.class]
-                    }));
+                    .map(p => ({ ...p, hausrat: HAUSRAT_MAP[p.class] }));
+                matchAndSmooth(hausratHits);
+            } catch (e) { /* silently continue */ }
+            detecting = false;
+        }
 
-                drawDetections(currentDetections);
-                updateUI(currentDetections);
-            } catch (e) {
-                // silently continue
+        // ----- Render Loop (smooth, every frame) -----
+        function renderLoop() {
+            const now = Date.now();
+
+            // Run detection at throttled interval
+            if (now - lastDetectTime > DETECT_INTERVAL) {
+                lastDetectTime = now;
+                runDetection();
             }
 
-            detecting = false;
-            requestAnimationFrame(detectLoop);
+            // Interpolate boxes every frame for smoothness
+            for (const key in trackedObjects) {
+                const t = trackedObjects[key];
+                for (let i = 0; i < 4; i++) {
+                    t.smoothBbox[i] = lerp(t.smoothBbox[i], t.targetBbox[i], LERP_SPEED);
+                }
+            }
+
+            // Rebuild currentDetections with updated positions
+            const nowForFade = Date.now();
+            currentDetections = Object.values(trackedObjects).map(t => ({
+                bbox: [...t.smoothBbox],
+                score: t.score,
+                hausrat: t.hausrat,
+                opacity: Math.max(0, 1 - (nowForFade - t.lastSeen) / FADE_OUT_MS),
+            }));
+
+            // Remove fully faded objects
+            for (const key in trackedObjects) {
+                if (nowForFade - trackedObjects[key].lastSeen > FADE_OUT_MS) {
+                    delete trackedObjects[key];
+                }
+            }
+
+            drawDetections(currentDetections);
+            updateUI(currentDetections);
+            requestAnimationFrame(renderLoop);
         }
 
         // ----- Draw Bounding Boxes -----
@@ -491,9 +586,12 @@
                 const sy = y * scaleY;
                 const sw = w * scaleX;
                 const sh = h * scaleY;
+                const alpha = det.opacity !== undefined ? det.opacity : 1;
 
                 const color = CATEGORY_COLORS[det.hausrat.cat] || '#4361ee';
                 const confidence = Math.round(det.score * 100);
+
+                ctx.globalAlpha = alpha;
 
                 // Box
                 ctx.strokeStyle = color;
@@ -534,6 +632,8 @@
 
                 ctx.fillStyle = '#fff';
                 ctx.fillText(label, sx + 6, sy - 6);
+
+                ctx.globalAlpha = 1;
             }
         }
 

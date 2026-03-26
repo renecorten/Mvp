@@ -552,7 +552,7 @@
                 for (let i = 0; i < 4; i++) {
                     t.smoothBbox[i] = lerp(t.smoothBbox[i], t.targetBbox[i], LERP_SPEED);
                 }
-                t.smoothScore = lerp(t.smoothScore || t.targetScore, t.targetScore, 0.15);
+                t.smoothScore = lerp(t.smoothScore || t.targetScore, t.targetScore, 0.05);
             }
 
             // Rebuild currentDetections with updated positions
@@ -592,7 +592,7 @@
                 const alpha = det.opacity !== undefined ? det.opacity : 1;
 
                 const color = CATEGORY_COLORS[det.hausrat.cat] || '#4361ee';
-                const confidence = Math.round(det.score * 100);
+                const confidence = Math.round(det.score * 20) * 5;
 
                 ctx.globalAlpha = alpha;
 
@@ -673,7 +673,7 @@
             for (const det of currentDetections) {
                 const [x, y, w, h] = det.bbox;
                 const color = CATEGORY_COLORS[det.hausrat.cat] || '#4361ee';
-                const confidence = Math.round(det.score * 100);
+                const confidence = Math.round(det.score * 20) * 5;
 
                 sCtx.strokeStyle = color;
                 sCtx.lineWidth = 3;

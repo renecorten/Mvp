@@ -443,7 +443,7 @@
                     // Smoothly interpolate to new position
                     const t = trackedObjects[key];
                     t.targetBbox = [x, y, w, h];
-                    t.score = det.score;
+                    t.targetScore = det.score;
                     t.lastSeen = now;
                     t.hausrat = det.hausrat;
                     t.visible = true;
@@ -452,6 +452,8 @@
                     trackedObjects[key] = {
                         smoothBbox: [x, y, w, h],
                         targetBbox: [x, y, w, h],
+                        smoothScore: det.score,
+                        targetScore: det.score,
                         score: det.score,
                         lastSeen: now,
                         hausrat: det.hausrat,
@@ -544,19 +546,20 @@
                 runDetection();
             }
 
-            // Interpolate boxes every frame for smoothness
+            // Interpolate boxes + score every frame for smoothness
             for (const key in trackedObjects) {
                 const t = trackedObjects[key];
                 for (let i = 0; i < 4; i++) {
                     t.smoothBbox[i] = lerp(t.smoothBbox[i], t.targetBbox[i], LERP_SPEED);
                 }
+                t.smoothScore = lerp(t.smoothScore || t.targetScore, t.targetScore, 0.15);
             }
 
             // Rebuild currentDetections with updated positions
             const nowForFade = Date.now();
             currentDetections = Object.values(trackedObjects).map(t => ({
                 bbox: [...t.smoothBbox],
-                score: t.score,
+                score: t.smoothScore,
                 hausrat: t.hausrat,
                 opacity: Math.max(0, 1 - (nowForFade - t.lastSeen) / FADE_OUT_MS),
             }));
